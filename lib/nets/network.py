@@ -365,12 +365,18 @@ class Network(nn.Module):
       #print('ss_boxes ', ss_boxes[:5,:])
       for i in range(self._num_classes):
           if image_level_label[0, i] == 1:
+              # 如果有那個種類
               cls_prob_tmp = cls_prob[:, i]
+              # 那個種類的所有ss shape = ss,1
               max_index = np.argmax(cls_prob_tmp)
-              
+              # 找到最大機率的那個匡
               max_score_box = np.concatenate((max_score_box, ss_boxes[max_index, 1:].reshape(1, -1)), axis=0)
+              # (1,4) 找出box的四個座標
               max_box_classes = np.concatenate((max_box_classes, (i+1)*np.ones((1, 1), dtype=np.int32)), axis=0)
+              # 是哪一個class
               max_box_score = np.concatenate((max_box_score, cls_prob_tmp[max_index]*np.ones((1, 1), dtype=np.float32)), axis=0)
+              # 是多少機率
+
       #print('image_level_labels ', image_level_label)
       #print('max_box_class ', max_box_classes)
       #print('max_box_score ', max_box_score)

@@ -1,0 +1,5 @@
+experiments/*
+tensorboard/*
+output/*
+data/*
+*.pyc
