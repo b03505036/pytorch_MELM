@@ -376,7 +376,7 @@ class Network(nn.Module):
               # 是哪一個class
               max_box_score = np.concatenate((max_box_score, cls_prob_tmp[max_index]*np.ones((1, 1), dtype=np.float32)), axis=0)
               # 是多少機率
-
+ 
       #print('image_level_labels ', image_level_label)
       #print('max_box_class ', max_box_classes)
       #print('max_box_score ', max_box_score)
