@@ -196,38 +196,7 @@ class Network(nn.Module):
     return loss_box
 
   def _add_losses(self, sigma_rpn=3.0):
-    ## RPN, class loss
-    #rpn_cls_score = self._predictions['rpn_cls_score_reshape'].view(-1, 2)
-    #rpn_label = self._anchor_targets['rpn_labels'].view(-1)
-    #rpn_select = (rpn_label.data != -1).nonzero().view(-1)
-    #rpn_cls_score = rpn_cls_score.index_select(0, rpn_select).contiguous().view(-1, 2)
-    #rpn_label = rpn_label.index_select(0, rpn_select).contiguous().view(-1)
-    #rpn_cross_entropy = F.cross_entropy(rpn_cls_score, rpn_label)
 
-    ## RPN, bbox loss
-    #rpn_bbox_pred = self._predictions['rpn_bbox_pred']
-    #rpn_bbox_targets = self._anchor_targets['rpn_bbox_targets']
-    #rpn_bbox_inside_weights = self._anchor_targets['rpn_bbox_inside_weights']
-    #rpn_bbox_outside_weights = self._anchor_targets['rpn_bbox_outside_weights']
-    #rpn_loss_box = self._smooth_l1_loss(rpn_bbox_pred, rpn_bbox_targets, rpn_bbox_inside_weights,
-    #                                      rpn_bbox_outside_weights, sigma=sigma_rpn, dim=[1, 2, 3])
-
-    # RCNN, class loss
-    # Done in 2018/11/19
-    #cls_score = self._predictions["cls_score"]
-    #label = self._proposal_targets["labels"].view(-1)
-    #cross_entropy = F.cross_entropy(cls_score.view(-1, self._num_classes), label)
-
-    # RCNN, bbox loss
-    #bbox_pred = self._predictions['bbox_pred']
-    #bbox_targets = self._proposal_targets['bbox_targets']
-    #bbox_inside_weights = self._proposal_targets['bbox_inside_weights']
-    #bbox_outside_weights = self._proposal_targets['bbox_outside_weights']
-    #loss_box = self._smooth_l1_loss(bbox_pred, bbox_targets, bbox_inside_weights, bbox_outside_weights)
-
-    #self._losses['cross_entropy'] = cross_entropy
-    #self._losses['loss_box'] = loss_box
-    
     self._losses['cross_entropy'] = np.zeros(1)
     self._losses['loss_box'] = np.zeros(1)
     self._losses['rpn_cross_entropy'] = np.zeros(1)
@@ -245,13 +214,20 @@ class Network(nn.Module):
     
     
     #caculating the loss of the first branch
+    # decide label
     roi_labels, roi_weights ,keep_inds = self.get_refine_supervision(det_cls_product, self._image_gt_summaries['ss_boxes'][self.ss_boxes_indexes, :],
                                                                      self._image_gt_summaries['image_level_label'])
     
     roi_weights = torch.tensor(roi_weights).cuda()
     roi_labels = torch.tensor(roi_labels, dtype=roi_weights.dtype).cuda()
-    #roi_labels = torch.mul(roi_labels, roi_weights)   
+    # roi_labels = torch.mul(roi_labels, roi_weights)
+
+    # refine_prob_1 shape = (ss_box,class)
+    # refine_prob_1[keep_inds] shape = (bg+fg,class)
+    # mul = elementwise
     refine_loss_1 = - torch.sum(torch.mul(roi_labels, torch.log(refine_prob_1[keep_inds]))) / roi_labels.shape[0]
+    # equ(7)
+    # 針對最高分roi 計算loss
     
     #caculating the loss of the second branch
     roi_labels, roi_weights, keep_inds = self.get_refine_supervision(refine_prob_1, self._image_gt_summaries['ss_boxes'][self.ss_boxes_indexes, :],
@@ -261,7 +237,7 @@ class Network(nn.Module):
     roi_labels = torch.tensor(roi_labels, dtype=roi_weights.dtype).cuda()
     #roi_labels = torch.mul(roi_labels, roi_weights)
     refine_loss_2 = - torch.sum(torch.mul(roi_labels, torch.log(refine_prob_2[keep_inds]))) / roi_labels.shape[0]
-    
+    # 計算第二次
     
     #roi_labels, roi_weights, keep_inds = self.get_refine_supervision(refine_prob_2, self._image_gt_summaries['ss_boxes'],
     #                                                                 self._image_gt_summaries['image_level_label'])
@@ -277,8 +253,11 @@ class Network(nn.Module):
     #print('label ', label)
     
     label = torch.tensor(label, dtype=det_cls_prob.dtype, device=det_cls_prob.device)
+    # det_cls_prob 有點問題，使用了logstic和softmax值相乘
     zeros = torch.zeros(det_cls_prob.shape, dtype=det_cls_prob.dtype, device=det_cls_prob.device)
+
     max_zeros = torch.max(zeros, 1-F.mul(label, det_cls_prob))
+    #
     cls_det_loss = torch.sum(max_zeros)
     self._losses['cls_det_loss'] = cls_det_loss / 20
     
@@ -363,6 +342,15 @@ class Network(nn.Module):
       max_box_classes = np.zeros((0, 1), dtype = np.int32)
       
       #print('ss_boxes ', ss_boxes[:5,:])
+      # 1. 多個目標
+      # 2. keypoint supervised
+
+      # new sudo code
+      # 這張圖的每個類
+      # if 這各類在這張圖有class分類
+      # for key_points 下選擇最大機率匡 疊入max_box_classes()，每一個key_point都要有ss_box
+
+
       for i in range(self._num_classes):
           if image_level_label[0, i] == 1:
               # 如果有那個種類
@@ -371,38 +359,55 @@ class Network(nn.Module):
               max_index = np.argmax(cls_prob_tmp)
               # 找到最大機率的那個匡
               max_score_box = np.concatenate((max_score_box, ss_boxes[max_index, 1:].reshape(1, -1)), axis=0)
-              # (1,4) 找出box的四個座標
+              # (k,4) 找出box的四個座標
               max_box_classes = np.concatenate((max_box_classes, (i+1)*np.ones((1, 1), dtype=np.int32)), axis=0)
               # 是哪一個class
+              # (k,)
               max_box_score = np.concatenate((max_box_score, cls_prob_tmp[max_index]*np.ones((1, 1), dtype=np.float32)), axis=0)
               # 是多少機率
- 
-      #print('image_level_labels ', image_level_label)
-      #print('max_box_class ', max_box_classes)
-      #print('max_box_score ', max_box_score)
+              # (k,1)
+
       overlaps = bbox_overlaps(ss_boxes[:,1:], max_score_box)
+      # 利用各類最大機率的class 來 overlap
+      # 500,k(有的class)
       gt_assignment = overlaps.argmax(axis=1)
+      # 500,1 500個proposal最大的交集的ss_box 的 index
       max_over_laps = overlaps.max(axis=1)
+      # 500,1 那個overlap率
+
       #print('max_over_laps', max_over_laps.max())
       #print('over laps', overlaps.shape)
       roi_weights[:, 0] = max_box_score[gt_assignment, 0]
+      # shape = ss_box , 1
+      # 每個類別有不同的分數weight
+
       labels = max_box_classes[gt_assignment, 0]
+      # labels = (500,1)
+      # max_box_classes = (class,1)
+      # 給了每個ss_box label
       
       fg_inds = np.where(max_over_laps > cfg.TRAIN.MIL_FG_THRESH)[0]
+      # where 滿足condition 才輸出index
+      # max_over_laps = (500,)
       
       roi_labels[fg_inds,labels[fg_inds]] = 1
+      # 將大於thr的設為1
+      # 500,21
       roi_labels[fg_inds, 0] = 0
       
       bg_inds = (np.array(max_over_laps >= cfg.TRAIN.MIL_BG_THRESH_LO, dtype=np.int32) + \
                  np.array(max_over_laps < cfg.TRAIN.MIL_BG_THRESH_HI, dtype=np.int32)==2).nonzero()[0]
-      
+
+      # 對所有overlap 在一定區間內的 index
+
       if len(fg_inds) > 0 and len(bg_inds) > 0:
           fg_rois_num = min(cfg.TRAIN.MIL_NUM_FG, len(fg_inds))
           fg_inds = fg_inds[np.random.choice(np.arange(0, len(fg_inds)), size=int(fg_rois_num), replace=False)]
           
           bg_rois_num = min(cfg.TRAIN.MIL_NUM_BG, len(bg_inds))
           bg_inds = bg_inds[np.random.choice(np.arange(0, len(bg_inds)), size=int(bg_rois_num), replace=False)]
-      
+
+      # 隨機選 MIL_NUM_BG 個
       elif len(fg_inds) > 0:
           fg_rois_num = min(cfg.TRAIN.MIL_NUM_FG, len(fg_inds))
           fg_inds = fg_inds[np.random.choice(np.arange(0, len(fg_inds)), size=int(fg_rois_num), replace=False)]
@@ -415,8 +420,13 @@ class Network(nn.Module):
       
       # print(len(fg_inds), len(bg_inds))
       keep_inds = np.concatenate([fg_inds, bg_inds])
-      
+      # bg+fg
+
+      # 第一個是 所有bg+fg label , 第二個是給每個box權重 第三個是 bg+fg的index
+      # shape (bg+fg,classes) shape(bf+fg,1) shape(1)
       return roi_labels[keep_inds, :], roi_weights[keep_inds,0].reshape(-1,1), keep_inds
+
+
   def _region_classification(self, fc7_roi, fc7_context, fc7_frame):
     #cls_score = self.cls_score_net(fc7)
     #det_score = self.det_score_net(fc7)
@@ -450,6 +460,7 @@ class Network(nn.Module):
     #refine_prob_3 = F.softmax(refine_score_3, dim=1)  #num x class_num+1
     
     det_cls_prob_product = F.mul(cls_score, det_prob)  #num x class_num
+    # element part
     det_cls_prob = torch.sum(det_cls_prob_product, 0) #1 x class_num or just a one dim vector whose size is class_num
     # bbox_pred = self.bbox_pred_net(fc7)
     bbox_pred = torch.zeros(cls_prob.shape[0], 80)
@@ -626,14 +637,17 @@ class Network(nn.Module):
     self._mode = mode
     
     self.ss_boxes_indexes = self.return_ss_boxes(np.arange(ss_boxes.shape[0]), mode)
+    # 約1000多個index
     rois, cls_prob, det_prob, bbox_pred ,cls_det_prob_product ,det_cls_prob = self._predict(ss_boxes[self.ss_boxes_indexes, :])
     
     bbox_pred = bbox_pred[:,:80]
+    # 沒用
     
     if mode == 'TEST':
       stds = bbox_pred.data.new(cfg.TRAIN.BBOX_NORMALIZE_STDS).repeat(self._num_classes).unsqueeze(0).expand_as(bbox_pred)
       means = bbox_pred.data.new(cfg.TRAIN.BBOX_NORMALIZE_MEANS).repeat(self._num_classes).unsqueeze(0).expand_as(bbox_pred)
       self._predictions["bbox_pred"] = bbox_pred.mul(stds).add(means)
+      # 有點問題
     else:
       self._add_losses() # compute losses
 
